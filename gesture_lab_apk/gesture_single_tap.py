@@ -1,5 +1,5 @@
 import time
-from appium_tests.gesture_login import test_login_pass
+from gesture_lab_apk.gesture_login import test_login_pass
 
 def test_single_tap(driver):
     a = driver.find_element('-android uiautomator','new UiSelector().className("android.view.View").instance(5)')
