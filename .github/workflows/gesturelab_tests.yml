@@ -1,0 +1,71 @@
+name: gesturelab_tests
+# Human-readable name of the workflow shown in GitHub Actions UI.
+# WHY: Makes it easy to identify this workflow among others.
+
+on:
+  push:
+    branches: [ main ]
+    # Triggers the workflow when commits are pushed to the 'main' branch.
+    # WHY: We want CI to run automatically on changes to main so tests run on every update.
+  pull_request:
+    # Also trigger on PR creation / updates.
+    # WHY: Runs tests for incoming changes so reviewers see whether tests pass before merging.
+
+jobs:
+  test:
+    # Define a job called "test". A job is a set of steps that run on the same runner.
+    runs-on: ubuntu-latest
+    # Choose the runner environment (virtual machine image) to run the job.
+    # WHY: ubuntu-latest is common, has Python tooling available and is free on GitHub Actions.
+
+    env:
+      APPIUM_SERVER_URL: ${{ secrets.APPIUM_SERVER_URL }}
+      CHROMEDRIVER_PATH: ${{ secrets.CHROMEDRIVER_PATH }}
+      DEVICE_NAME: emulator-5554
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        # Step that checks out your repo code into the runner workspace.
+        # WHY: You must fetch the code to run tests against it. The 'uses' syntax reuses a pre-built action.
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+        # Installs and configures the specified Python version on the runner.
+        # WHY: Ensures a consistent Python environment across runs (same as you develop with).
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+        # Runs shell commands to upgrade pip and install packages from requirements.txt.
+        # WHY: Your tests rely on package dependencies (pytest, appium client, reporting libs, etc.).
+        #      Installing them is necessary before tests run.
+
+      - name: Run pytest and generate HTML report
+        run: |
+          pytest appium_tests/ --html=report.html --self-contained-html -q
+        # Runs pytest on the specified folder and creates a self-contained HTML report.
+        # Flags explained:
+        #   --html=report.html           -> produce an HTML report file named report.html
+        #   --self-contained-html        -> embeds CSS/JS into the single HTML file for portability
+        #   -q                           -> quiet output (less verbose logs)
+        #   || true                      -> prevents the shell from returning a non-zero exit code if pytest fails
+        #
+        # WHY:
+        #  - We run pytest to execute your automation tests.
+        #  - We generate an HTML file so you can quickly download/view test results from Actions artifacts.
+        #  - The `|| true` is optional: it keeps the workflow from being marked FAILED even if tests fail.
+        #    Use it if you want the run to always complete and still collect artifacts.
+        #    Remove it if you want failing tests to fail the job (recommended for enforcing test quality).
+
+      - name: Upload pytest HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report
+          path: report.html
+        # Uploads the generated HTML report as a downloadable artifact from the workflow run.
+        # WHY: Artifacts let you retrieve the report from the Actions UI after the job completes,
+        #      which is useful for debugging failures and sharing results with teammates.
