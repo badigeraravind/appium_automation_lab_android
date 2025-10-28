@@ -1,6 +1,5 @@
 import time
 from gesture_lab_apk.gesture_login import test_login_pass
-from appium.webdriver.common.appiumby import appiumby
 
 def _test_internet(driver):
     a = driver.find_element('-android uiautomator','new UiSelector().className("android.view.View").instance(15)')
