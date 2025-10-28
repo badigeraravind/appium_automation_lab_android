@@ -46,7 +46,7 @@ jobs:
 
       - name: Run pytest and generate HTML report
         run: |
-          pytest appium_tests/ --html=report.html --self-contained-html -q
+          pytest gesture_lab_apk/ --html=report.html --self-contained-html -q
         # Runs pytest on the specified folder and creates a self-contained HTML report.
         # Flags explained:
         #   --html=report.html           -> produce an HTML report file named report.html
