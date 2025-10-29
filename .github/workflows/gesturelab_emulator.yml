@@ -1,4 +1,4 @@
-name: gesturelab_tests
+name: gesturelab_emulator
 
 on:
   push:
