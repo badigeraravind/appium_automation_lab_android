@@ -25,54 +25,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK & system image
-        run: |
-          set -eux
-          sudo apt-get update
-          sudo apt-get install -y unzip libgl1-mesa-dev qemu-kvm
-          export ANDROID_SDK_ROOT=/usr/local/android-sdk
-          sudo mkdir -p $ANDROID_SDK_ROOT
-          cd /tmp
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
-          sudo unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT
-          sudo mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
-          sudo mv $ANDROID_SDK_ROOT/cmdline-tools/* $ANDROID_SDK_ROOT/cmdline-tools/latest/ || true
-          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platform-tools" "platforms;android-33" "system-images;android-33;google_apis;x86_64" "emulator"
-
-      - name: Create & start Android emulator (headless)
-        run: |
-          set -eux
-          export ANDROID_SDK_ROOT=/usr/local/android-sdk
-          export PATH=$PATH:$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
-          echo "no" | avdmanager create avd -n testAVD -k "system-images;android-33;google_apis;x86_64" --force
-          # start emulator in background
-          $ANDROID_SDK_ROOT/emulator/emulator -avd testAVD -no-window -no-audio -gpu swiftshader_indirect -accel on &
-
-      - name: Wait for emulator to boot
-        run: |
-          set -eux
-          export ANDROID_SDK_ROOT=/usr/local/android-sdk
-          export PATH=$PATH:$ANDROID_SDK_ROOT/platform-tools
-          adb wait-for-device
-          for i in $(seq 1 80); do
-            BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "")
-            echo "Emulator boot state: '$BOOT' (try $i)"
-            if [ "$BOOT" = "1" ]; then
-              echo "Emulator booted"
-              break
-            fi
-            sleep 5
-          done
-          adb devices
-          # slight pause to ensure device ready
-          sleep 2
+      - name: Launch Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            echo "✅ Emulator launched successfully"
+            adb devices
 
       - name: Install APK onto emulator
         run: |
           set -eux
-          export ANDROID_SDK_ROOT=/usr/local/android-sdk
-          export PATH=$PATH:$ANDROID_SDK_ROOT/platform-tools
           mkdir -p artifacts
           if [ -f artifacts/gesturelab.apk ]; then
             adb install -r artifacts/gesturelab.apk
