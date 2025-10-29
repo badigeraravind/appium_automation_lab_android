@@ -47,12 +47,9 @@ jobs:
             done
             adb devices -l
     
-      - name: Install APK onto emulator (wait until device is ready)
+      - name: Install APK onto emulator (robust wait + install)
         run: |
           set -eux
-          # reactor action typically sets Android SDK; ensure adb in PATH
-          export ANDROID_SDK_ROOT=/usr/local/android-sdk
-          export PATH=$PATH:$ANDROID_SDK_ROOT/platform-tools
           mkdir -p artifacts
           if [ ! -f artifacts/gesturelab.apk ]; then
             echo "ERROR: APK not found at artifacts/gesturelab.apk"
@@ -60,39 +57,45 @@ jobs:
             exit 1
           fi
 
-          echo "Starting adb server..."
-          adb start-server || true
+          echo "Ensure adb server running..."
+          adb kill-server || true
+          adb start-server
 
-          # Wait for a device in 'device' state and for boot to complete
+          # Wait until we have a 'device' (not offline) OR give up after N tries.
+          READY=0
           for i in $(seq 1 60); do
             echo "Checking adb devices (attempt $i)..."
             adb devices -l
-            # get first ready device (device state)
+          
+          # If any device is in 'device' state, assume it's ready enough to check boot property
+          if adb devices | awk 'NR>1 && $2=="device" {print $1; exit 0}'; then
             SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
-            if [ -n "$SERIAL" ]; then
-              echo "Found ready device: $SERIAL"
-              BOOT=$(adb -s $SERIAL shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "")
-              echo "sys.boot_completed=$BOOT"
-              if [ "$BOOT" = "1" ]; then
-                echo "Device fully booted"
-                break
-              fi
-            else
-              echo "No ready device yet (attempt $i)"
+            echo "Found device: $SERIAL — checking sys.boot_completed..."
+            BOOT=$(adb -s "$SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "")
+            echo "sys.boot_completed=$BOOT"
+            if [ "$BOOT" = "1" ]; then
+              READY=1
+              break
             fi
-            sleep 5
+          fi  
+        
+          # If we see offline device(s), try restarting adb once to recover
+          if adb devices | grep -q offline; then
+            echo "Found 'offline' devices — restarting adb server and retrying..."
+            adb kill-server || true
+            adb start-server
+          fi
+          sleep 5
           done
 
-          # Final check: must have device in device state
-          adb devices -l
-          if ! adb devices | awk 'NR>1 { if ($2=="device") exit 0 } END { exit 1 }'; then
-            echo "ERROR: No device in 'device' state after waiting. Dump logs for debug."
+          if [ "$READY" -ne 1 ]; then
+            echo "ERROR: emulator never reached device/booted state. Dumping debug info..."
             adb devices -l || true
-            adb logcat -d || true
+            adb logcat -d | tail -n 200 || true
             exit 1
           fi
 
-          # install on the first ready device
+          echo "Device ready. Installing APK..."
           SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
           adb -s "$SERIAL" install -r artifacts/gesturelab.apk
 
