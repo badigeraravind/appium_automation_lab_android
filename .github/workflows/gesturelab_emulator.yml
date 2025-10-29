@@ -1,4 +1,4 @@
-name: gesturelab_emulator
+name: gesturelab-emulator-ci
 
 on:
   push:
@@ -6,25 +6,20 @@ on:
   pull_request:
 
 jobs:
-  test:
+  run-emulator-and-tests:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 120
     env:
+      # Optional: if you set this secret it will be available; conftest.py already
+      # falls back to http://127.0.0.1:4723/wd/hub when empty/missing.
       APPIUM_SERVER_URL: ${{ secrets.APPIUM_SERVER_URL }}
-      CHROMEDRIVER_PATH: ${{ secrets.CHROMEDRIVER_PATH }}
       DEVICE_NAME: emulator-5554
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-       
-      - name: Setup Java (required for Android tools)
+      - name: Setup Java (required for Android SDK/tools)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -32,90 +27,104 @@ jobs:
 
       - name: Install Android SDK & system image
         run: |
+          set -eux
           sudo apt-get update
           sudo apt-get install -y unzip libgl1-mesa-dev qemu-kvm
           export ANDROID_SDK_ROOT=/usr/local/android-sdk
           sudo mkdir -p $ANDROID_SDK_ROOT
           cd /tmp
-          wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
-          sudo unzip cmdline-tools.zip -d $ANDROID_SDK_ROOT
-          # move into "latest" folder expected by sdkmanager
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
+          sudo unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT
           sudo mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
-          sudo mv $ANDROID_SDK_ROOT/cmdline-tools/* $ANDROID_SDK_ROOT/cmdline-tools/latest/
+          sudo mv $ANDROID_SDK_ROOT/cmdline-tools/* $ANDROID_SDK_ROOT/cmdline-tools/latest/ || true
           export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
           yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platform-tools" "platforms;android-33" "system-images;android-33;google_apis;x86_64" "emulator"
 
       - name: Create & start Android emulator (headless)
         run: |
+          set -eux
           export ANDROID_SDK_ROOT=/usr/local/android-sdk
           export PATH=$PATH:$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
           echo "no" | avdmanager create avd -n testAVD -k "system-images;android-33;google_apis;x86_64" --force
-          # start emulator in background (headless)
+          # start emulator in background
           $ANDROID_SDK_ROOT/emulator/emulator -avd testAVD -no-window -no-audio -gpu swiftshader_indirect -accel on &
 
       - name: Wait for emulator to boot
         run: |
+          set -eux
           export ANDROID_SDK_ROOT=/usr/local/android-sdk
           export PATH=$PATH:$ANDROID_SDK_ROOT/platform-tools
           adb wait-for-device
-          for i in {1..60}; do
+          for i in $(seq 1 80); do
             BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "")
-            echo "Emulator boot status: '$BOOT' (attempt $i)"
+            echo "Emulator boot state: '$BOOT' (try $i)"
             if [ "$BOOT" = "1" ]; then
-              echo "emulator booted"
+              echo "Emulator booted"
               break
             fi
             sleep 5
           done
           adb devices
+          # slight pause to ensure device ready
+          sleep 2
 
       - name: Install APK onto emulator
         run: |
+          set -eux
           export ANDROID_SDK_ROOT=/usr/local/android-sdk
           export PATH=$PATH:$ANDROID_SDK_ROOT/platform-tools
+          mkdir -p artifacts
           if [ -f artifacts/gesturelab.apk ]; then
             adb install -r artifacts/gesturelab.apk
           else
-            echo "APK not found at artifacts/gesturelab.apk — update workflow or add APK to repo"
+            echo "ERROR: APK not found at artifacts/gesturelab.apk"
+            echo "Place your APK at artifacts/gesturelab.apk or update the workflow path"
+            ls -la || true
             exit 1
           fi
 
-      - name: Set up Python & install dependencies
+      - name: Set up Python 3.11 and install Python dependencies
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
       - name: Install Python dependencies
         run: |
+          set -eux
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install Node and Appium, start Appium server
+      - name: Install Node and Appium (v2) and start Appium server
         run: |
-          set -e
+          set -eux
           curl -sL https://deb.nodesource.com/setup_18.x | sudo -E bash -
           sudo apt-get install -y nodejs build-essential
+          # try to install pinned appium or fallback to latest
           sudo npm install -g appium@2.1.2 || sudo npm install -g appium
           APP_LOG=appium.log
+          # start Appium with base-path /wd/hub so clients expecting /wd/hub work
           nohup appium --base-path /wd/hub &> "$APP_LOG" &
-          # wait for Appium to be ready
-          for i in $(seq 1 30); do
-            echo "Checking Appium ($i/30)..."
+          # wait for Appium to report ready
+          for i in $(seq 1 40); do
+            echo "Checking Appium ($i/40)..."
             if curl -sS http://127.0.0.1:4723/wd/hub/status 2>/dev/null | grep -q '"ready":true'; then
-              echo "Appium ready"
+              echo "Appium is ready"
               break
             fi
             sleep 2
           done
           if ! curl -sS http://127.0.0.1:4723/wd/hub/status 2>/dev/null | grep -q '"ready":true'; then
-            echo "Appium failed to start; last 200 lines of $APP_LOG:"
+            echo "Appium failed to start; dumping last 200 lines of $APP_LOG"
             tail -n 200 "$APP_LOG" || true
+            cat "$APP_LOG" || true
             exit 1
           fi
-          ps aux | grep -E "node|appium" || true
+          ps aux | grep -E "appium|node" || true
 
-      - name: Run pytest and generate HTML report
+      - name: Run pytest (Appium tests) and generate HTML report
         run: |
-          pytest gesture_lab_apk/ --html=report.html --self-contained-html -q
+          set -eux
+          # run tests in the gesture_lab_apk folder (adjust path if needed)
+          pytest gesture_lab_apk/ --maxfail=1 --html=report.html --self-contained-html -q
 
       - name: Upload pytest HTML report
         uses: actions/upload-artifact@v4
@@ -123,9 +132,17 @@ jobs:
           name: pytest-report
           path: report.html
 
-      - name: Upload Appium log
+      - name: Upload Appium log and adb logcat
+        run: |
+          set -eux
+          # collect adb log (optional) and appium log
+          export ANDROID_SDK_ROOT=/usr/local/android-sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/platform-tools
+          adb logcat -d > adb_logcat.txt || true
+          tar -czf logs.tar.gz appium.log adb_logcat.txt || true
+        # upload logs as artifact
+      - name: Upload logs artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appium-log
-          path: appium.log
-       
+          name: emulator-logs
+          path: logs.tar.gz
