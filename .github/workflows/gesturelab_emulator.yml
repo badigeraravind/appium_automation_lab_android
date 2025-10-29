@@ -34,20 +34,67 @@ jobs:
           profile: pixel_6
           script: |
             echo "✅ Emulator launched successfully"
-            adb devices
-
-      - name: Install APK onto emulator
+            adb devices -l
+            # wait for boot (safety): sys.boot_completed=1
+            for i in $(seq 1 60); do
+              BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "")
+              echo "boot=$BOOT (try $i)"
+              if [ "$BOOT" = "1" ]; then
+                echo "Emulator fully booted"
+                break
+              fi
+              sleep 5
+            done
+            adb devices -l
+    
+      - name: Install APK onto emulator (wait until device is ready)
         run: |
           set -eux
+          # reactor action typically sets Android SDK; ensure adb in PATH
+          export ANDROID_SDK_ROOT=/usr/local/android-sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/platform-tools
           mkdir -p artifacts
-          if [ -f artifacts/gesturelab.apk ]; then
-            adb install -r artifacts/gesturelab.apk
-          else
+          if [ ! -f artifacts/gesturelab.apk ]; then
             echo "ERROR: APK not found at artifacts/gesturelab.apk"
-            echo "Place your APK at artifacts/gesturelab.apk or update the workflow path"
-            ls -la || true
+            ls -la artifacts || true
             exit 1
           fi
+
+          echo "Starting adb server..."
+          adb start-server || true
+
+          # Wait for a device in 'device' state and for boot to complete
+          for i in $(seq 1 60); do
+            echo "Checking adb devices (attempt $i)..."
+            adb devices -l
+            # get first ready device (device state)
+            SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
+            if [ -n "$SERIAL" ]; then
+              echo "Found ready device: $SERIAL"
+              BOOT=$(adb -s $SERIAL shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "")
+              echo "sys.boot_completed=$BOOT"
+              if [ "$BOOT" = "1" ]; then
+                echo "Device fully booted"
+                break
+              fi
+            else
+              echo "No ready device yet (attempt $i)"
+            fi
+            sleep 5
+          done
+
+          # Final check: must have device in device state
+          adb devices -l
+          if ! adb devices | awk 'NR>1 { if ($2=="device") exit 0 } END { exit 1 }'; then
+            echo "ERROR: No device in 'device' state after waiting. Dump logs for debug."
+            adb devices -l || true
+            adb logcat -d || true
+            exit 1
+          fi
+
+          # install on the first ready device
+          SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
+          adb -s "$SERIAL" install -r artifacts/gesturelab.apk
 
       - name: Set up Python 3.11 and install Python dependencies
         uses: actions/setup-python@v4
