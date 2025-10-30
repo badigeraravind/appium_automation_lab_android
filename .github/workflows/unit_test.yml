@@ -15,7 +15,7 @@ jobs:
      uses: actions/checkout@v4
    
    - name: run the test
-     run: pytest api_tests
+     run: pytest smoke_tests
    
    - name: generate the test report
      run: --html=assert_test_report.html --self-contained-html -q
