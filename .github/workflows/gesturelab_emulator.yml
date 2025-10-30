@@ -10,8 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      # Optional: if you set this secret it will be available; conftest.py already
-      # falls back to http://127.0.0.1:4723/wd/hub when empty/missing.
+      # Optional secret; conftest.py falls back to http://127.0.0.1:4723/wd/hub when empty/missing.
       APPIUM_SERVER_URL: ${{ secrets.APPIUM_SERVER_URL }}
       DEVICE_NAME: emulator-5554
 
@@ -25,75 +24,102 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Install prerequisites (curl, unzip, etc.)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip libgl1-mesa-dev qemu-kvm curl gnupg apt-transport-https ca-certificates
+
+      - name: Download Android commandline-tools
+        run: |
+          set -eux
+          export ANDROID_SDK_ROOT=/usr/local/android-sdk
+          sudo mkdir -p $ANDROID_SDK_ROOT
+          cd /tmp
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
+          sudo unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT
+          sudo mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
+          # move into expected layout (ignore errors)
+          sudo mv $ANDROID_SDK_ROOT/cmdline-tools/* $ANDROID_SDK_ROOT/cmdline-tools/latest/ || true
+          # export path for subsequent sdkmanager usage
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
+          # ensure ownership so sdkmanager can write licenses
+          sudo chown -R $USER:$USER $ANDROID_SDK_ROOT
+
+      - name: Accept Android SDK licenses (non-interactive)
+        run: |
+          set -eux
+          export ANDROID_SDK_ROOT=/usr/local/android-sdk
+          SDKMAN=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager
+          # create licenses dir if missing
+          mkdir -p "$ANDROID_SDK_ROOT/licenses"
+          # Accept all licenses non-interactively
+          yes | "$SDKMAN" --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+
       - name: Launch emulator, wait for ready and install APK (atomic)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
           target: google_apis
           arch: x86_64
-          profile: pixel_3a           # use a slightly lighter profile; change if desired
-          emulator-options: >        # helpful flags to speed boot & reduce graphics issues
+          profile: pixel_3a
+          emulator-options: > 
             -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -wipe-data -no-snapshot
           script: |
             set -eux
 
-            echo "=== emulator: list devices initially ==="
+            echo "=== emulator: initial adb devices ==="
             adb devices -l || true
 
-            # Wait for a device to show in adb (any state). We'll handle 'offline' below.
-            echo "Waiting for an adb device entry..."
+            # Wait for some adb entry (may be offline initially)
+            echo "Waiting for adb to show a device entry..."
             for i in $(seq 1 40); do
               adb devices -l
               if adb devices | awk 'NR>1{print $2}' | grep -q '.'; then
-                echo "Found adb device entry (may be offline), continuing to boot checks"
+                echo "Found an adb entry"
                 break
               fi
               sleep 3
             done
 
-            # Ensure adb server fresh
+            # restart adb server to avoid stale/unauthorized/offline state
             adb kill-server || true
             adb start-server || true
             sleep 2
 
-            # Robust wait: device must be in 'device' state and boot completed + bootanim stopped
+            # Robust wait: require 'device' state and sys.boot_completed + bootanim stopped
             READY=0
-            for i in $(seq 1 120); do    # up to ~10 minutes (120 * 5s)
-              echo "Attempt $i: adb devices -l"
+            for i in $(seq 1 120); do
+              echo "Attempt $i: list devices"
               adb devices -l
 
-            # if any online device, capture serial
-            SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
-            if [ -n "$SERIAL" ]; then
-              echo "Device in 'device' state: $SERIAL"
-              BOOT_COMPLETED=$(adb -s "$SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "")
-              BOOTANIM=$(adb -s "$SERIAL" shell getprop init.svc.bootanim 2>/dev/null | tr -d '\r' || echo "")
-              echo "sys.boot_completed=${BOOT_COMPLETED}, init.svc.bootanim=${BOOTANIM}"
-              if [ "$BOOT_COMPLETED" = "1" ] && { [ -z "$BOOTANIM" ] || [ "$BOOTANIM" = "stopped" ]; }; then
-                echo "Device fully booted and stable"
-                READY=1
-                break
+              SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
+              if [ -n "$SERIAL" ]; then
+                echo "Device in 'device' state: $SERIAL"
+                BOOT_COMPLETED=$(adb -s "$SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "")
+                BOOTANIM=$(adb -s "$SERIAL" shell getprop init.svc.bootanim 2>/dev/null | tr -d '\r' || echo "")
+                echo "sys.boot_completed=${BOOT_COMPLETED}, init.svc.bootanim=${BOOTANIM}"
+                if [ "$BOOT_COMPLETED" = "1" ] && { [ -z "$BOOTANIM" ] || [ "$BOOTANIM" = "stopped" ]; }; then
+                  READY=1
+                  break
+                fi
+              else
+                if adb devices | grep -q offline; then
+                  echo "Found offline device(s) — restarting adb"
+                  adb kill-server || true
+                  adb start-server || true
+                fi
               fi
-            else
-              # if there is an offline device, restart adb server to try to recover
-              if adb devices | grep -q offline; then
-                echo "Found offline devices — restarting adb server"
-                adb kill-server || true
-                adb start-server || true
-              fi
-            fi
-            sleep 5
+              sleep 5
             done
 
             if [ "$READY" -ne 1 ]; then
-              echo "ERROR: emulator never reached ready device state. Dumping debug info..."
+              echo "ERROR: emulator never reached ready state. Dumping debug info..."
               adb devices -l || true
-              # show last 200 lines of logcat to help debug
               adb -s emulator-5554 logcat -d | tail -n 200 || true
               exit 1
             fi
 
-            echo "Device ready. Installing APK..."
+            echo "Device ready — installing APK"
             mkdir -p artifacts
             if [ ! -f artifacts/gesturelab.apk ]; then
               echo "ERROR: APK not found at artifacts/gesturelab.apk"
@@ -101,20 +127,20 @@ jobs:
               exit 1
             fi
 
-            # install to found serial
             SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
-            echo "Using device serial: $SERIAL for install"
+            echo "Installing to serial: $SERIAL"
             adb -s "$SERIAL" install -r artifacts/gesturelab.apk
-            
-            echo "APK install complete. Print device packages to confirm:"
+
+            echo "APK installed; listing installed packages (first 50)"
             adb -s "$SERIAL" shell pm list packages | head -n 50 || true
 
-            echo "Emulator + APK ready"
+            echo "Emulator + APK ready."
 
-      - name: Set up Python 3.11 and install Python dependencies
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
       - name: Install Python dependencies
         run: |
           set -eux
@@ -126,22 +152,22 @@ jobs:
           set -eux
           curl -sL https://deb.nodesource.com/setup_18.x | sudo -E bash -
           sudo apt-get install -y nodejs build-essential
-          # try to install pinned appium or fallback to latest
+          # try to install a pinned Appium version, fallback to latest if not available
           sudo npm install -g appium@2.1.2 || sudo npm install -g appium
           APP_LOG=appium.log
-          # start Appium with base-path /wd/hub so clients expecting /wd/hub work
+          # start Appium in background with base-path /wd/hub (many clients expect /wd/hub)
           nohup appium --base-path /wd/hub &> "$APP_LOG" &
-          # wait for Appium to report ready
+          # wait for Appium to be ready
           for i in $(seq 1 40); do
             echo "Checking Appium ($i/40)..."
             if curl -sS http://127.0.0.1:4723/wd/hub/status 2>/dev/null | grep -q '"ready":true'; then
-              echo "Appium is ready"
+              echo "Appium ready"
               break
             fi
             sleep 2
           done
           if ! curl -sS http://127.0.0.1:4723/wd/hub/status 2>/dev/null | grep -q '"ready":true'; then
-            echo "Appium failed to start; dumping last 200 lines of $APP_LOG"
+            echo "Appium failed to start; printing last 200 lines of $APP_LOG"
             tail -n 200 "$APP_LOG" || true
             cat "$APP_LOG" || true
             exit 1
@@ -151,8 +177,7 @@ jobs:
       - name: Run pytest (Appium tests) and generate HTML report
         run: |
           set -eux
-          # run tests in the gesture_lab_apk folder (adjust path if needed)
-          pytest gesture_lab_apk/ --maxfail=1 --html=report.html --self-contained-html -q
+          pytest gesture_lab_apk/ --html=report.html --self-contained-html -q
 
       - name: Upload pytest HTML report
         uses: actions/upload-artifact@v4
@@ -160,15 +185,13 @@ jobs:
           name: pytest-report
           path: report.html
 
-      - name: Upload Appium log and adb logcat
+      - name: Collect logs (adb logcat and appium log)
         run: |
           set -eux
-          # collect adb log (optional) and appium log
-          export ANDROID_SDK_ROOT=/usr/local/android-sdk
-          export PATH=$PATH:$ANDROID_SDK_ROOT/platform-tools
-          adb logcat -d > adb_logcat.txt || true
+          adb devices -l || true
+          adb -s emulator-5554 logcat -d > adb_logcat.txt || true
           tar -czf logs.tar.gz appium.log adb_logcat.txt || true
-        # upload logs as artifact
+
       - name: Upload logs artifact
         uses: actions/upload-artifact@v4
         with:
