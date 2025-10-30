@@ -9,7 +9,7 @@ on:
 
 jobs:
  assert_check:
-  runs-on: ubuntu_latest
+  runs-on: ubuntu-latest
   steps:
    - name: checkout repository
      uses: actions/checkout@v4
