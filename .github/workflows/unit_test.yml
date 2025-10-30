@@ -3,7 +3,9 @@ name: unit test
 on:
  push:
   branches: [main]
- pull_request:
+ pull_request: 
+  branches: [main]
+  types : [opened, reopened, synchronize, closed] 
 
 jobs:
  assert_check:
