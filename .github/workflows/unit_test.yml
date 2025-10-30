@@ -1,0 +1,28 @@
+name: unit test
+
+on:
+ push:
+  branches: [main]
+ pull_request:
+
+jobs:
+ assert_check:
+  runs-on: ubuntu_latest
+  steps:
+   - name: checkout repository
+     uses: actions/checkout@v4
+   
+   - name: run the test
+     run: pytest api_tests
+   
+   - name: generate the test report
+     run: --html=assert_test_report.html --self-contained-html -q
+
+   - name: upload the report
+     uses: actions/upload-artifact@v4
+     with:
+      name: assert report
+      path: assert_test_report.html
+   
+ 
+  
