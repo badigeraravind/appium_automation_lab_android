@@ -18,10 +18,10 @@ jobs:
     # Choose the runner environment (virtual machine image) to run the job.
     # WHY: ubuntu-latest is common, has Python tooling available and is free on GitHub Actions.
 
-    env:
-      APPIUM_SERVER_URL: ${{ secrets.APPIUM_SERVER_URL }}
-      CHROMEDRIVER_PATH: ${{ secrets.CHROMEDRIVER_PATH }}
-      DEVICE_NAME: emulator-5554
+    #env:
+    #  APPIUM_SERVER_URL: ${{ secrets.APPIUM_SERVER_URL }}
+    #  CHROMEDRIVER_PATH: ${{ secrets.CHROMEDRIVER_PATH }}
+    #  DEVICE_NAME: emulator-5554
 
     steps:
       - name: Checkout repository
