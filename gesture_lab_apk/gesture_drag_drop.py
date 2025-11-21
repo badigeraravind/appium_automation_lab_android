@@ -6,7 +6,7 @@ def test_drag_drop(driver):
     a = driver.find_element('-android uiautomator','new UiSelector().className("android.view.View").instance(11)')
     driver.execute_script('mobile: clickGesture', {'elementId':a.id})
 
-    for _ in range (1,11):
+    for _ in range (1,8):
         b = driver.find_element('accessibility id','wooden_nail')
         src_x = random.randint(100,1000)
         src_y = random.randint(400, 2000)

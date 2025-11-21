@@ -6,7 +6,7 @@ from appium.options.android import UiAutomator2Options  # <-- NEW
 @pytest.fixture
 
 def driver():
-    appium_url = os.getenv("APPIUM_SERVER_URL") or "http://127.0.0.1:4723/wd/hub"
+    appium_url = os.getenv("APPIUM_SERVER_URL") or "http://127.0.0.1:4723"
 
     # If running in CI and no remote Appium is configured, skip the tests
     if os.getenv("GITHUB_ACTIONS") and not os.getenv("APPIUM_SERVER_URL"):

@@ -1,5 +1,0 @@
-AB-001 | player's progression is lost when internet is disconnected | critical
-AB-002 | game crashes when players jumps into the abandoned area | blocker
-AB-002.1 | vfx issue | minor
-AB-003 | no audio when the player shoots from shotgun | major
---end--
