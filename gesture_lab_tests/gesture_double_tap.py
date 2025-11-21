@@ -1,4 +1,4 @@
-from gesture_lab_apk.gesture_login import test_login_pass
+from gesture_lab_tests.gesture_login import test_login_pass
 import time
 
 def test_double_tap(driver):

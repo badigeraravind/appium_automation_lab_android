@@ -2,7 +2,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from appium.webdriver.common.appiumby import AppiumBy
-from gesture_lab_apk.gesture_login import test_login_pass
+from gesture_lab_tests.gesture_login import test_login_pass
 
 def test_webview(driver):
     WebDriverWait(driver,5).until(EC.element_to_be_clickable((AppiumBy.ACCESSIBILITY_ID,'nav_webview_loading'))).click()
